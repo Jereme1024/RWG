@@ -29,7 +29,7 @@
 #include <vector>
 #include <arpa/inet.h>
 
-const int MAX_CONNECTION = 5;
+const int MAX_CONNECTION = 31;
 const int MAX_CLIENT = 31;
 const int MAX_NAME = 32;
 
@@ -80,6 +80,7 @@ public:
 	/// @return A number of client fd.
 	int accept_one()
 	{
+		std::cerr << "Accept ready!!!\n";
 		int clientfd;
 
 		if ((clientfd = accept(sockfd, (sockaddr *) &client_addr, &client_len)) < 0)
@@ -87,6 +88,9 @@ public:
 			std::cerr << "Server accept failed.\n";
 			exit(EXIT_FAILURE);
 		}
+
+		static int i = 0;
+		std::cerr << "Accept one!!! " << i++ << "\n";
 
 		return clientfd;
 	}

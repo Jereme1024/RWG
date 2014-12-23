@@ -25,6 +25,8 @@
 #include <iostream>
 #include <map>
 
+#include <semaphore.h>
+
 enum pid_dic { CHILD = 0 };
 enum pip_dic { PIPEIN = 1, PIPEOUT = 0};
 enum fif_dic { FIFOIN = 1, FIFOOUT = 0};
@@ -79,11 +81,33 @@ public:
 	std::map<std::string, std::string> env;
 	std::string log;
 
+	sem_t *mutex_user;
+	sem_t *mutex_chat;
+	sem_t *mutex_fifo;
+	bool is_need_locked;
+
 	/// @brief Initialize PATH to be "bin:.".
-	Console() : system_id(0), proc_counter(0), is_exit_(false), is_fd_backup(false)
+	Console()
+		: system_id(0)
+		, proc_counter(0)
+		, is_exit_(false)
+		, is_fd_backup(false)
+		, is_need_locked(false)
 	{
 		env["PATH"] = "bin:.";
 		setenv("PATH", "bin:.", true);
+	}
+
+	void sem_wait(sem_t *lock)
+	{
+		if (is_need_locked)
+			::sem_wait(lock);
+	}
+
+	void sem_post(sem_t *lock)
+	{
+		if (is_need_locked)
+			::sem_post(lock);
 	}
 
 	inline void backup_fd()
@@ -459,12 +483,15 @@ public:
 		int fifo_out;
 		if (need_fifo_from)
 		{
+			sem_wait(mutex_fifo);
+
 			if (fifo_status->rwstatus[cmd.fifo_from][system_id] != 1)
 			{
 				std::cout << "*** Error: the pipe #" << cmd.fifo_from << "->#" << system_id << " does not exist yet. ***" << std::endl;
 
 				unregister_pipe(cmd.proc_id - 1);
 
+				sem_post(mutex_fifo);
 				return;
 			}
 
@@ -482,17 +509,23 @@ public:
 
 			fifo_status->rwstatus[cmd.fifo_from][system_id] = 2;
 
-			kill(0, SIGUSR1); // close the input side of FIFO
+			sem_post(mutex_fifo);
+
+			//kill(0, SIGUSR1); // close the input side of FIFO
+			user_status->pass_signal(SIGUSR1);
 		}
 
 
 		if (need_fifo_to)
 		{
+			sem_wait(mutex_fifo);
+
 			if (user_status->is_available(cmd.fifo_to))
 			{
 				if (fifo_status->rwstatus[system_id][cmd.fifo_to] != 0)
 				{
 					std::cout << "*** Error: the pipe #" << system_id << "->#" << cmd.fifo_to << " already exists. ***" << std::endl;
+					sem_post(mutex_fifo);
 					return;
 				}
 				else
@@ -517,8 +550,11 @@ public:
 			else
 			{
 				std::cout << "*** Error: user #" << cmd.fifo_to << " does not exist yet. ***" << std::endl;
+				sem_post(mutex_fifo);
 				return;
 			}
+
+			sem_post(mutex_fifo);
 		}
 		
 
@@ -613,7 +649,12 @@ public:
 	void remove_fifo(int from, int to)
 	{
 		std::string fifo_name = get_fifo_name(from, to);
+
+		sem_wait(mutex_fifo);
+
 		fifo_status->rwstatus[from][to] = 0;
+
+		sem_post(mutex_fifo);
 
 		if (unlink(fifo_name.c_str()) < 0)
 		{

@@ -54,6 +54,7 @@ struct User
 	char ip[INET_ADDRSTRLEN];
 	unsigned short port;
 	int clientfd; 
+	pid_t pid;
 };
 
 struct UserStatus
@@ -96,7 +97,7 @@ struct UserStatus
 		return users[id].clientfd != -1;
 	}
 
-	int add(std::string name, char ip[], unsigned short port, int clientfd)
+	int add(std::string name, char ip[], unsigned short port, int clientfd, pid_t pid = 0)
 	{
 		int uid = get_smallest_id();
 		if (uid < 0)
@@ -109,6 +110,7 @@ struct UserStatus
 		strcpy(users[uid].ip, ip);
 		users[uid].port = port;
 		users[uid].clientfd = clientfd;
+		users[uid].pid = pid;
 
 		return uid;
 	}
@@ -129,6 +131,17 @@ struct UserStatus
 				return i;
 		}
 		return -1;
+	}
+
+	void pass_signal(int sig)
+	{
+		for (int i = 1; i < MAX_CLIENT; i++)
+		{
+			if (is_available(i) && users[i].pid != 0)
+			{
+				kill(users[i].pid, sig);
+			}
+		}
 	}
 };
 
@@ -172,6 +185,8 @@ public:
 
 	std::string query_who(int me)
 	{
+		sem_wait(host->mutex_user);
+
 		std::string info = "<ID>	<nickname>	<IP/port>	<indicate me>\n";
 		for (int i = 1; i < MAX_CLIENT; i++)
 		{
@@ -188,6 +203,8 @@ public:
 					info += "\n";
 			}
 		}
+
+		sem_post(host->mutex_user);
 
 		return info;
 	}
@@ -257,6 +274,8 @@ public:
 			}
 			else if (cmd[0] == "name")
 			{
+				sem_wait(host->mutex_user);
+
 				bool is_name_duplicated = false;
 				for (int i = 1; i < MAX_CLIENT; i++)
 				{
@@ -285,6 +304,8 @@ public:
 
 					host->broadcast(message);
 				}
+
+				sem_post(host->mutex_user);
 
 				commands.erase(it);
 				return true;
@@ -578,6 +599,8 @@ public:
 	{
 		// This function will called by execute(...) that is locked before, so need not lock again!
 
+		sem_wait(mutex_fifo);
+
 		ServiceWrapperMultiple<Console> *inst =  ServiceWrapperMultiple<Console>::get_instance();
 		const int uid = inst->system_id;
 
@@ -590,6 +613,8 @@ public:
 				inst->fifo_status->rwstatus[uid][j] = 0;
 			}
 		}
+
+		sem_post(mutex_fifo);
 	}
 
 	static void delete_shm(int sig)
@@ -643,9 +668,13 @@ public:
 			exit(-1);
 		}
 
-
 		Console::user_status = user_status;
 		Console::fifo_status = fifo_status;
+
+		Console::mutex_user = mutex_user;
+		Console::mutex_chat = mutex_chat;
+		Console::mutex_fifo = mutex_fifo;
+		Console::is_need_locked = true;
 
 		set_instance();
 	}
@@ -691,6 +720,7 @@ public:
 
 	void enter(int clientfd, sockaddr_in client_addr)
 	{
+		std::cerr << "Enter!\n";
 		auto do_nothing = [](int n){};
 		auto do_exit = [](int n){exit(EXIT_SUCCESS);};
 
@@ -699,6 +729,7 @@ public:
 		signal(SIGUSR1, ServiceWrapperMultiple<Console>::collect_fifo_garbage);
 		signal(SIGUSR2, ServiceWrapperMultiple<Console>::receive_message);
 
+		Console::backup_fd();
 		Console::replace_fd(clientfd);
 
 		User user;
@@ -709,7 +740,7 @@ public:
 
 		sem_wait(mutex_user);
 
-		int uid = user_status->add("(no name)", user.ip, user.port, clientfd);
+		int uid = user_status->add("(no name)", user.ip, user.port, clientfd, getpid());
 
 		set_uid(uid);
 
@@ -722,6 +753,7 @@ public:
 		sem_post(mutex_user);
 
 		std::cout << Console::get_MOTD();
+
 		broadcast(welcome_msg);
 	}
 
@@ -731,13 +763,14 @@ public:
 
 		while (Console::get_command())
 		{
+			//std::cerr << Console::cmd_line << "\n";
 			cmd_line = Console::cmd_line;
 
 			auto parsed_result = Console::parse_cmd(cmd_line);
 			auto commands = Console::setup_builtin_cmd(parsed_result);
 
-			sem_wait(mutex_user);
-			sem_wait(mutex_fifo);
+			//sem_wait(mutex_user);
+			//sem_wait(mutex_fifo);
 
 			if (!ServerCmd.execute_serv_builtin_cmd(commands))
 			{
@@ -762,8 +795,8 @@ public:
 				}
 			}
 
-			sem_post(mutex_fifo);
-			sem_post(mutex_user);
+			//sem_post(mutex_fifo);
+			//sem_post(mutex_user);
 
 			if (is_leave())
 			{
@@ -831,8 +864,14 @@ public:
 		}
 
 		sem_post(mutex_chat);
-		
-		kill(0, SIGUSR2); 
+
+		//kill(0, SIGUSR2); 
+		user_status->pass_signal(SIGUSR2);
+	}
+
+	void trigger_chat()
+	{
+
 	}
 
 
