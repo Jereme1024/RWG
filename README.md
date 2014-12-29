@@ -5,8 +5,11 @@ Implement a shell conosle with server-client architecture and new pipe subsystem
 This shell console allows online users to communicate to each other. 
 Some parts of this RWG are like RAS but more chat-like commands are implemented.
 
+There two versions of RWG which are single-process model (using fdset/select) and multiple-process model (fork/shared memory).
+
 Commands [who], [tell], [yell], [name] are supported.
 
+<pre>
 Format of command [tell]: 
    % tell (client id) (message)
    And the client will get the message with following format:
@@ -90,4 +93,4 @@ The output format of [who]:
    <new client login> // server assigns this client id = 2
    <client 1 logout>
    <new client login> // server assigns this client id = 1, not 3
-
+</pre>
